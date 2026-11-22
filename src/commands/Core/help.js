@@ -101,7 +101,7 @@ export async function createInitialHelpMenu(client) {
             },
             {
                 name: '\u200B',
-                value: `-# ${botName} is [open source]()`,
+                value: `-# ${botName} is [open source](https://youtube.com/@top_labowi?si=HVHzdR5ORvlWwxJT)`,
                 inline: false,
             },
         ],
@@ -118,8 +118,8 @@ export async function createInitialHelpMenu(client) {
         .setStyle(ButtonStyle.Danger);
 
     const supportButton = new ButtonBuilder()
-        .setLabel("Support Server")
-        .setURL("")
+        .setLabel("𝐃𝐙  𝐓𝐎𝐏  | 𝐌𝐎𝐃𝐒  6𝐊")
+        .setURL("https://discord.gg/SWN6CsrGC")
         .setStyle(ButtonStyle.Link);
 
     const selectRow = createSelectMenu(
