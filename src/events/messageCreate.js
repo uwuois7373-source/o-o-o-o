@@ -29,34 +29,10 @@ const SUGGESTION_TIMEZONE = 'Asia/Riyadh';
 // إعدادات نظام العروض (Offers System)
 // ==========================================
 const OFFERS_CHANNEL_ID = '1435618260581355603';
-const OFFERS_ROLE_ID = '1414758130361044992';
+const OFFERS_ROLE_ID = '1526407997763354686';
 const ORDER_CHANNEL_URL = 'https://discord.com/channels/1343103634761715755/1398080880236302407';
-
-// خريطة لتجميع تحديثات الرسائل (بحد أقصى مرة كل 1000ms = ثانية واحدة)
-const pendingEmbedEdits = new Map();
-
-export function scheduleEmbedUpdate(targetMessage, buildPayloadFn, delayMs = 1000) {
-  if (!targetMessage?.id) return;
-
-  pendingEmbedEdits.set(targetMessage.id, { targetMessage, buildPayloadFn });
-
-  if (targetMessage._editTimer) return;
-
-  targetMessage._editTimer = setTimeout(async () => {
-    targetMessage._editTimer = null;
-    const entry = pendingEmbedEdits.get(targetMessage.id);
-    pendingEmbedEdits.delete(targetMessage.id);
-
-    if (!entry) return;
-
-    try {
-      const payload = await entry.buildPayloadFn();
-      await entry.targetMessage.edit(payload);
-    } catch (error) {
-      logger.error('Error in scheduled embed update:', error);
-    }
-  }, delayMs);
-}
+const OFFER_EMOJI = '<:emoji_14:1519524322979479602>';
+const OFFER_BANNER_GIF = 'https://cdn.discordapp.com/attachments/1391737614926614588/1555914383253708850/standard-1.gif?backend=b2&ex=6b0972b0&is=6b082130&hm=ae902d4ad6dc2d371f1028efb789e64efff59565abf7d5bdd66e6af45fda9d9e&';
 
 export default {
   name: Events.MessageCreate,
@@ -159,8 +135,9 @@ async function handleOffer(message) {
     const files = [];
 
     const embed = new EmbedBuilder()
-      .setColor(0xf1c40f)
-      .setDescription(`<@&${OFFERS_ROLE_ID}>\n\n${safeText}\n\n<@&${OFFERS_ROLE_ID}>`);
+      .setColor(0xf5b014)
+      .setDescription(`<@&${OFFERS_ROLE_ID}>\n\n${safeText}\n\n<@&${OFFERS_ROLE_ID}>`)
+      .setTimestamp();
 
     const image = message.attachments.find(a => a.contentType?.startsWith('image/'));
     if (image) {
@@ -168,11 +145,14 @@ async function handleOffer(message) {
       const fileName = `offer.${ext}`;
       files.push(new AttachmentBuilder(image.url, { name: fileName }));
       embed.setImage(`attachment://${fileName}`);
+    } else if (OFFER_BANNER_GIF) {
+      embed.setImage(OFFER_BANNER_GIF);
     }
 
     const linkRow = new ActionRowBuilder().addComponents(
       new ButtonBuilder()
         .setLabel('Order Now')
+        .setEmoji(OFFER_EMOJI)
         .setStyle(ButtonStyle.Link)
         .setURL(ORDER_CHANNEL_URL),
     );
@@ -181,10 +161,12 @@ async function handleOffer(message) {
       new ButtonBuilder()
         .setCustomId(`offer_info:${message.author.id}:${message.createdTimestamp}`)
         .setLabel('Offer Information')
+        .setEmoji(OFFER_EMOJI)
         .setStyle(ButtonStyle.Primary),
       new ButtonBuilder()
         .setCustomId(`offer_delete:${message.author.id}`)
         .setLabel('Delete Offer')
+        .setEmoji(OFFER_EMOJI)
         .setStyle(ButtonStyle.Danger),
     );
 
@@ -212,7 +194,7 @@ function handleAutoResponse(message) {
     } else if (content === 'fayt') {
       message.reply('pr.sampdroid.app:7777').catch(() => {});
     } else if (content === 'خط') {
-      message.reply('https://cdn.discordapp.com/attachments/1391737614926614588/1555914383253708850/standard-1.gif?backend=b2&ex=6ac2ea70&is=6ac198f0&hm=15533f388cc6ffddc683615e6f416376bd0bd16b83a7ec36e905c0037bc320d7&').catch(() => {});
+      message.reply('https://cdn.discordapp.com/attachments/1391737614926614588/1555914383253708850/standard-1.gif?backend=b2&ex=6b0972b0&is=6b082130&hm=ae902d4ad6dc2d371f1028efb789e64efff59565abf7d5bdd66e6af45fda9d9e&').catch(() => {});
     } else if (content === 'رابط') {
       message.reply('𝐃𝐙  𝐓𝐎𝐏  | 𝐌𝐎𝐃𝐒  2𝐊\nhttps://discord.gg/CdGddfWQZq').catch(() => {});
     }
