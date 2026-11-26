@@ -1,58 +1,38 @@
-import fs from 'node:fs';
-import path from 'node:path';
-import { ActionRowBuilder, ButtonBuilder, ButtonStyle } from 'discord.js';
+import { Events, MessageFlags } from 'discord.js';
+import { logger } from '../utils/logger.js';
+import { buildVoteRow, toggleVote } from '../utils/suggestionVotes.js';
 
-// ايدي الإيموجيات (الرقم الأخير)
-export const UP_EMOJI = '1573676877745225859';    // صح
-export const DOWN_EMOJI = '1573676851396612106';  // غلط
+const MESSAGES = {
+  up: {
+    added: '✅ تم تسجيل تصويتك بالموافقة على الاقتراح.',
+    removed: '⚠️ لقد أزلت تصويتك بالموافقة.',
+  },
+  down: {
+    added: '❌ تم تسجيل تصويتك برفض الاقتراح.',
+    removed: '⚠️ لقد أزلت تصويتك بالرفض.',
+  },
+};
 
-const FILE = path.join(process.cwd(), 'data', 'suggestionVotes.json');
+export default {
+  name: Events.InteractionCreate,
+  async execute(interaction) {
+    try {
+      if (!interaction.isButton()) return;
+      if (interaction.customId !== 'sug_up' && interaction.customId !== 'sug_down') return;
 
-function load() {
-  try {
-    return JSON.parse(fs.readFileSync(FILE, 'utf8'));
-  } catch {
-    return {};
-  }
-}
+      const type = interaction.customId === 'sug_up' ? 'up' : 'down';
+      const result = toggleVote(interaction.message.id, interaction.user.id, type);
 
-function save(data) {
-  fs.mkdirSync(path.dirname(FILE), { recursive: true });
-  fs.writeFileSync(FILE, JSON.stringify(data));
-}
+      // تحديث العدادات على الأزرار
+      await interaction.update({ components: [buildVoteRow(result.up, result.down)] });
 
-export function buildVoteRow(up = 0, down = 0) {
-  return new ActionRowBuilder().addComponents(
-    new ButtonBuilder()
-      .setCustomId('sug_up')
-      .setStyle(ButtonStyle.Secondary)
-      .setEmoji({ id: UP_EMOJI })
-      .setLabel(String(up)),
-    new ButtonBuilder()
-      .setCustomId('sug_down')
-      .setStyle(ButtonStyle.Secondary)
-      .setEmoji({ id: DOWN_EMOJI })
-      .setLabel(String(down)),
-  );
-}
-
-// يسجل أو يلغي تصويت الشخص
-export function toggleVote(messageId, userId, type) {
-  const data = load();
-  const entry = (data[messageId] ??= { up: [], down: [] });
-  const other = type === 'up' ? 'down' : 'up';
-
-  entry[other] = entry[other].filter(id => id !== userId);
-
-  let action;
-  if (entry[type].includes(userId)) {
-    entry[type] = entry[type].filter(id => id !== userId);
-    action = 'removed';
-  } else {
-    entry[type].push(userId);
-    action = 'added';
-  }
-
-  save(data);
-  return { action, up: entry.up.length, down: entry.down.length };
-}
+      // رسالة لا يراها إلا الشخص الذي صوّت
+      await interaction.followUp({
+        content: MESSAGES[type][result.action],
+        flags: MessageFlags.Ephemeral,
+      });
+    } catch (error) {
+      logger.error('Error handling suggestion vote:', error);
+    }
+  },
+};
