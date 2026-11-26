@@ -1,4 +1,11 @@
-import { Events, EmbedBuilder, AttachmentBuilder } from 'discord.js';
+import {
+  Events,
+  EmbedBuilder,
+  AttachmentBuilder,
+  ActionRowBuilder,
+  ButtonBuilder,
+  ButtonStyle,
+} from 'discord.js';
 import { logger } from '../utils/logger.js';
 import { parsePrefixCommand } from '../utils/prefixParser.js';
 import { supportsPrefixExecution, executePrefixCommand, resolvePrefixAccessKey } from '../utils/messageAdapter.js';
@@ -18,6 +25,39 @@ const SUGGESTION_CHANNEL_ID = '1437792846907183165';
 const START_EMOJI_FULL = '<:moderator:1519524179396005908>';
 const SUGGESTION_TIMEZONE = 'Asia/Riyadh';
 
+// ==========================================
+// إعدادات نظام العروض (Offers System)
+// ==========================================
+const OFFERS_CHANNEL_ID = '1435618260581355603';
+const OFFERS_ROLE_ID = '1414758130361044992';
+const ORDER_CHANNEL_URL = 'https://discord.com/channels/1343103634761715755/1398080880236302407';
+
+// خريطة لتجميع تحديثات الرسائل (بحد أقصى مرة كل 1000ms = ثانية واحدة)
+const pendingEmbedEdits = new Map();
+
+export function scheduleEmbedUpdate(targetMessage, buildPayloadFn, delayMs = 1000) {
+  if (!targetMessage?.id) return;
+
+  pendingEmbedEdits.set(targetMessage.id, { targetMessage, buildPayloadFn });
+
+  if (targetMessage._editTimer) return;
+
+  targetMessage._editTimer = setTimeout(async () => {
+    targetMessage._editTimer = null;
+    const entry = pendingEmbedEdits.get(targetMessage.id);
+    pendingEmbedEdits.delete(targetMessage.id);
+
+    if (!entry) return;
+
+    try {
+      const payload = await entry.buildPayloadFn();
+      await entry.targetMessage.edit(payload);
+    } catch (error) {
+      logger.error('Error in scheduled embed update:', error);
+    }
+  }, delayMs);
+}
+
 export default {
   name: Events.MessageCreate,
   async execute(message, client) {
@@ -30,6 +70,12 @@ export default {
         return;
       }
 
+      // 0.5 نظام العروض
+      if (message.channel.id === OFFERS_CHANNEL_ID) {
+        await handleOffer(message);
+        return;
+      }
+
       // 1. معالج الردود التلقائية
       handleAutoResponse(message);
 
@@ -38,7 +84,7 @@ export default {
     } catch (error) {
       logger.error('Error in messageCreate event:', error);
     }
-  }
+  },
 };
 
 // ==========================================
@@ -98,6 +144,59 @@ async function handleSuggestion(message) {
     await message.delete().catch(() => {});
   } catch (error) {
     logger.error('Error handling suggestion:', error);
+  }
+}
+
+// ==========================================
+// دالة العروض (Offers)
+// ==========================================
+async function handleOffer(message) {
+  try {
+    const rawText = message.content.trim();
+    if (!rawText && message.attachments.size === 0) return;
+
+    const safeText = rawText ? rawText.slice(0, 3500) : '—';
+    const files = [];
+
+    const embed = new EmbedBuilder()
+      .setColor(0xf1c40f)
+      .setDescription(`<@&${OFFERS_ROLE_ID}>\n\n${safeText}\n\n<@&${OFFERS_ROLE_ID}>`);
+
+    const image = message.attachments.find(a => a.contentType?.startsWith('image/'));
+    if (image) {
+      const ext = (image.name?.split('.').pop() || 'png').toLowerCase();
+      const fileName = `offer.${ext}`;
+      files.push(new AttachmentBuilder(image.url, { name: fileName }));
+      embed.setImage(`attachment://${fileName}`);
+    }
+
+    const linkRow = new ActionRowBuilder().addComponents(
+      new ButtonBuilder()
+        .setLabel('Order Now')
+        .setStyle(ButtonStyle.Link)
+        .setURL(ORDER_CHANNEL_URL),
+    );
+
+    const actionRow = new ActionRowBuilder().addComponents(
+      new ButtonBuilder()
+        .setCustomId(`offer_info:${message.author.id}:${message.createdTimestamp}`)
+        .setLabel('Offer Information')
+        .setStyle(ButtonStyle.Primary),
+      new ButtonBuilder()
+        .setCustomId(`offer_delete:${message.author.id}`)
+        .setLabel('Delete Offer')
+        .setStyle(ButtonStyle.Danger),
+    );
+
+    await message.channel.send({
+      embeds: [embed],
+      components: [linkRow, actionRow],
+      files,
+    });
+
+    await message.delete().catch(() => {});
+  } catch (error) {
+    logger.error('Error handling offer:', error);
   }
 }
 
