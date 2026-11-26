@@ -1,4 +1,4 @@
-import { Events } from 'discord.js';
+import { Events, EmbedBuilder } from 'discord.js';
 import { logger } from '../utils/logger.js';
 import { parsePrefixCommand } from '../utils/prefixParser.js';
 import { supportsPrefixExecution, executePrefixCommand, resolvePrefixAccessKey } from '../utils/messageAdapter.js';
@@ -10,12 +10,30 @@ import { enforceAbuseProtection, formatCooldownDuration } from '../utils/abusePr
 import { createEmbed } from '../utils/embeds.js';
 import { isCommandEnabled } from '../services/commandAccessService.js';
 
+// ==========================================
+// إعدادات نظام الاقتراحات
+// ==========================================
+const SUGGESTION_CHANNEL_ID = '1437792846907183165';
+
+// إيموجي التصويت (نستخدم الـ ID الأخير فقط)
+const UP_EMOJI = '1573676877745225859';    // صح
+const DOWN_EMOJI = '1573676851396612106';  // غلط
+
+// إيموجي يظهر في بداية نص الاقتراح (الصيغة الكاملة)
+const START_EMOJI_FULL = '<:1158060888041979934:1538952241652699136>';
+
 export default {
   name: Events.MessageCreate,
   async execute(message, client) {
     try {
       // تجاهل البوتات والرسائل الخاصة
       if (message.author.bot || !message.guild) return;
+
+      // 0. نظام الاقتراحات
+      if (message.channel.id === SUGGESTION_CHANNEL_ID) {
+        await handleSuggestion(message);
+        return; // ما نكمل للردود التلقائية أو الأوامر داخل روم الاقتراحات
+      }
 
       // 1. معالج الردود التلقائية (يعمل فوراً)
       handleAutoResponse(message);
@@ -27,6 +45,42 @@ export default {
     }
   }
 };
+
+// ==========================================
+// دالة الاقتراحات
+// ==========================================
+async function handleSuggestion(message) {
+  try {
+    const text = message.content.trim();
+
+    // لو الرسالة فاضية تماماً (بدون نص ولا مرفقات) نتجاهلها
+    if (!text && message.attachments.size === 0) return;
+
+    const embed = new EmbedBuilder()
+      .setColor(0x5865f2)
+      .setAuthor({
+        name: message.member?.displayName || message.author.username,
+        iconURL: message.author.displayAvatarURL({ dynamic: true }),
+      })
+      .setDescription(`${START_EMOJI_FULL} ${text || '\u200b'}`)
+      .setFooter({ text: `ID: ${message.author.id}` })
+      .setTimestamp();
+
+    // لو فيه صورة مرفقة نحطها داخل الـ embed
+    const image = message.attachments.find(a => a.contentType?.startsWith('image/'));
+    if (image) embed.setImage(image.url);
+
+    // نرسل الاقتراح أول، وبعدها نحذف رسالة الشخص (عشان ما يضيع الاقتراح لو فشل الإرسال)
+    const sent = await message.channel.send({ embeds: [embed] });
+    await message.delete().catch(() => {});
+
+    // نضيف إيموجي التصويت
+    await sent.react(UP_EMOJI);
+    await sent.react(DOWN_EMOJI);
+  } catch (error) {
+    logger.error('Error handling suggestion:', error);
+  }
+}
 
 // ==========================================
 // دالة الرد التلقائي (نظيفة وتعمل بدون توقف)
@@ -49,12 +103,15 @@ function handleAutoResponse(message) {
   }
 }
 
+// ==========================================
+// معالج أوامر البريفكس
+// ==========================================
 async function handlePrefixCommand(message, client) {
   try {
     const guildConfig = await getGuildConfig(client, message.guild.id);
     const prefix = guildConfig?.prefix || getCommandPrefix();
     const parsed = parsePrefixCommand(message.content, prefix);
-    
+
     if (!parsed) return;
 
     let { commandName, args } = parsed;
