@@ -1,8 +1,12 @@
-import { Events } from 'discord.js';
+import {
+  Events,
+  EmbedBuilder,
+  AttachmentBuilder,
+  ActionRowBuilder,
+  ButtonBuilder,
+  ButtonStyle,
+} from 'discord.js';
 import { logger } from '../utils/logger.js';
-import { getLevelingConfig, getUserLevelData } from '../services/leveling/leveling.js';
-import { addXp } from '../services/leveling/xpSystem.js';
-import { checkRateLimit } from '../utils/rateLimiter.js';
 import { parsePrefixCommand } from '../utils/prefixParser.js';
 import { supportsPrefixExecution, executePrefixCommand, resolvePrefixAccessKey } from '../utils/messageAdapter.js';
 import { resolveCommandAlias, resolveSubcommandAlias } from '../config/commands/commandAliases.js';
@@ -12,15 +16,23 @@ import { getCommandPrefix, getBotMessage, isBotOwner, isCommandCategoryEnabled, 
 import { enforceAbuseProtection, formatCooldownDuration } from '../utils/abuseProtection.js';
 import { createEmbed } from '../utils/embeds.js';
 import { isCommandEnabled } from '../services/commandAccessService.js';
-import {
-  getCountingGameConfig,
-  saveCountingGameConfig,
-  isValidCountingMessage,
-  recordCorrectCount,
-} from '../services/countingGameService.js';
+import { buildVoteRow } from '../utils/suggestionVotes.js';
 
-const MESSAGE_XP_RATE_LIMIT_ATTEMPTS = 12;
-const MESSAGE_XP_RATE_LIMIT_WINDOW_MS = 10000;
+// ==========================================
+// إعدادات نظام الاقتراحات
+// ==========================================
+const SUGGESTION_CHANNEL_ID = '1437792846907183165';
+const START_EMOJI_FULL = '<:moderator:1519524179396005908>';
+const SUGGESTION_TIMEZONE = 'Asia/Riyadh';
+
+// ==========================================
+// إعدادات نظام العروض (Offers System)
+// ==========================================
+const OFFERS_CHANNEL_ID = '1435618260581355603';
+const OFFERS_ROLE_ID = '1526407997763354686';
+const ORDER_CHANNEL_URL = 'https://discord.com/channels/1343103634761715755/1398080880236302407';
+const OFFER_EMOJI = '<:emoji_14:1519524322979479602>';
+const OFFER_BANNER_GIF = 'https://cdn.discordapp.com/attachments/1391737614926614588/1555914383253708850/standard-1.gif?backend=b2&ex=6b0972b0&is=6b082130&hm=ae902d4ad6dc2d371f1028efb789e64efff59565abf7d5bdd66e6af45fda9d9e&';
 
 export default {
   name: Events.MessageCreate,
@@ -28,31 +40,179 @@ export default {
     try {
       if (message.author.bot || !message.guild) return;
 
-      logger.debug(`Message received from ${message.author.tag}: ${message.content}`);
-
-      const countingProcessed = await handleCountingGame(message, client);
-      if (countingProcessed) {
+      // 0. نظام الاقتراحات
+      if (message.channel.id === SUGGESTION_CHANNEL_ID) {
+        await handleSuggestion(message);
         return;
       }
 
-      await handlePrefixCommand(message, client);
+      // 0.5 نظام العروض
+      if (message.channel.id === OFFERS_CHANNEL_ID) {
+        await handleOffer(message);
+        return;
+      }
 
-      await handleLeveling(message, client);
+      // 1. معالج الردود التلقائية
+      handleAutoResponse(message);
+
+      // 2. معالج الأوامر العادية
+      await handlePrefixCommand(message, client);
     } catch (error) {
       logger.error('Error in messageCreate event:', error);
     }
-  }
+  },
 };
 
+// ==========================================
+// دالة الاقتراحات
+// ==========================================
+async function handleSuggestion(message) {
+  try {
+    const rawText = message.content.trim();
+    if (!rawText && message.attachments.size === 0) return;
+
+    const displayName = message.member?.displayName || message.author.username;
+    const avatar = message.author.displayAvatarURL({ extension: 'png', size: 256 });
+    const unix = Math.floor(Date.now() / 1000);
+
+    const footerDate = new Date().toLocaleString('en-GB', {
+      timeZone: SUGGESTION_TIMEZONE,
+      day: '2-digit',
+      month: '2-digit',
+      year: 'numeric',
+      hour: '2-digit',
+      minute: '2-digit',
+      hour12: false,
+    }).replace(',', '');
+
+    const safeText = (rawText || '—').replace(/`/g, 'ˋ').slice(0, 1000);
+
+    const embed = new EmbedBuilder()
+      .setColor(0x2b2d31)
+      .setTitle(`${START_EMOJI_FULL} **New Suggestion!**`)
+      .addFields(
+        { name: '**Status**', value: '**Under Review**', inline: true },
+        { name: '**User**', value: `**<@${message.author.id}>**`, inline: true },
+        { name: '**Time**', value: `**<t:${unix}:f>**`, inline: true },
+        { name: '**Suggestion**', value: `\`\`\`\n${safeText}\n\`\`\`` },
+      )
+      .setFooter({
+        text: `Suggestion sent by : ${displayName} • ${footerDate}`,
+        iconURL: avatar,
+      });
+
+    const files = [];
+    const image = message.attachments.find(a => a.contentType?.startsWith('image/'));
+    if (image) {
+      const ext = (image.name?.split('.').pop() || 'png').toLowerCase();
+      const fileName = `suggestion.${ext}`;
+      files.push(new AttachmentBuilder(image.url, { name: fileName }));
+      embed.setThumbnail(`attachment://${fileName}`);
+    } else {
+      embed.setThumbnail(avatar);
+    }
+
+    await message.channel.send({
+      embeds: [embed],
+      components: [buildVoteRow(0, 0)],
+      files,
+    });
+    await message.delete().catch(() => {});
+  } catch (error) {
+    logger.error('Error handling suggestion:', error);
+  }
+}
+
+// ==========================================
+// دالة العروض (Offers)
+// ==========================================
+async function handleOffer(message) {
+  try {
+    const rawText = message.content.trim();
+    if (!rawText && message.attachments.size === 0) return;
+
+    const safeText = rawText ? rawText.slice(0, 3500) : '—';
+    const files = [];
+
+    const embed = new EmbedBuilder()
+      .setColor(0xf5b014)
+      .setDescription(`<@&${OFFERS_ROLE_ID}>\n\n${safeText}\n\n<@&${OFFERS_ROLE_ID}>`)
+      .setTimestamp();
+
+    const image = message.attachments.find(a => a.contentType?.startsWith('image/'));
+    if (image) {
+      const ext = (image.name?.split('.').pop() || 'png').toLowerCase();
+      const fileName = `offer.${ext}`;
+      files.push(new AttachmentBuilder(image.url, { name: fileName }));
+      embed.setImage(`attachment://${fileName}`);
+    } else if (OFFER_BANNER_GIF) {
+      embed.setImage(OFFER_BANNER_GIF);
+    }
+
+    const linkRow = new ActionRowBuilder().addComponents(
+      new ButtonBuilder()
+        .setLabel('Order Now')
+        .setEmoji(OFFER_EMOJI)
+        .setStyle(ButtonStyle.Link)
+        .setURL(ORDER_CHANNEL_URL),
+    );
+
+    const actionRow = new ActionRowBuilder().addComponents(
+      new ButtonBuilder()
+        .setCustomId(`offer_info:${message.author.id}:${message.createdTimestamp}`)
+        .setLabel('Offer Information')
+        .setEmoji(OFFER_EMOJI)
+        .setStyle(ButtonStyle.Primary),
+      new ButtonBuilder()
+        .setCustomId(`offer_delete:${message.author.id}`)
+        .setLabel('Delete Offer')
+        .setEmoji(OFFER_EMOJI)
+        .setStyle(ButtonStyle.Danger),
+    );
+
+    await message.channel.send({
+      embeds: [embed],
+      components: [linkRow, actionRow],
+      files,
+    });
+
+    await message.delete().catch(() => {});
+  } catch (error) {
+    logger.error('Error handling offer:', error);
+  }
+}
+
+// ==========================================
+// دالة الرد التلقائي
+// ==========================================
+function handleAutoResponse(message) {
+  try {
+    const content = message.content.trim().toLowerCase();
+
+    if (content === 'ip') {
+      message.reply('144.217.62.159:7777').catch(() => {});
+    } else if (content === 'fayt') {
+      message.reply('pr.sampdroid.app:7777').catch(() => {});
+    } else if (content === 'خط') {
+      message.reply('https://cdn.discordapp.com/attachments/1391737614926614588/1555914383253708850/standard-1.gif?backend=b2&ex=6b0972b0&is=6b082130&hm=ae902d4ad6dc2d371f1028efb789e64efff59565abf7d5bdd66e6af45fda9d9e&').catch(() => {});
+    } else if (content === 'رابط') {
+      message.reply('𝐃𝐙  𝐓𝐎𝐏  | 𝐌𝐎𝐃𝐒  2𝐊\nhttps://discord.gg/CdGddfWQZq').catch(() => {});
+    }
+  } catch (error) {
+    logger.error('Error handling auto response:', error);
+  }
+}
+
+// ==========================================
+// معالج أوامر البريفكس
+// ==========================================
 async function handlePrefixCommand(message, client) {
   try {
     const guildConfig = await getGuildConfig(client, message.guild.id);
     const prefix = guildConfig?.prefix || getCommandPrefix();
     const parsed = parsePrefixCommand(message.content, prefix);
-    
-    if (!parsed) {
-      return; 
-    }
+
+    if (!parsed) return;
 
     let { commandName, args } = parsed;
     const musicPrefixShortcut = commandName.toLowerCase();
@@ -62,16 +222,10 @@ async function handlePrefixCommand(message, client) {
       args = [musicPrefixShortcut, ...args];
     }
 
-    logger.info(`Prefix command detected: ${commandName}, args: ${args.join(', ')}`);
-
     const resolvedCommandName = resolveCommandAlias(commandName);
-    logger.info(`Resolved command name: ${resolvedCommandName}`);
     const command = client.commands.get(resolvedCommandName);
 
-    if (!command) {
-      logger.warn(`Command not found: ${resolvedCommandName}`);
-      return; 
-    }
+    if (!command) return;
 
     if (isMaintenanceMode() && !isBotOwner(message.author.id)) {
       await message.channel.send({
@@ -138,116 +292,8 @@ async function handlePrefixCommand(message, client) {
       return;
     }
 
-    logger.info(`Executing prefix command: ${prefix}${commandName} (resolved to ${resolvedCommandName}) by ${message.author.tag}`);
-    
     await executePrefixCommand(command, message, args, client, prefix, guildConfig);
   } catch (error) {
     logger.error('Error handling prefix command:', error);
-  }
-}
-
-async function handleCountingGame(message, client) {
-  try {
-    const config = await getCountingGameConfig(client, message.guild.id);
-    if (!config.enabled || !config.channelId || message.channel.id !== config.channelId) {
-      return false;
-    }
-
-    const content = message.content.trim();
-    const validCount = isValidCountingMessage(content, config);
-    const invalidAttempt = !validCount || message.author.id === config.lastUserId;
-
-    if (invalidAttempt) {
-      await message.delete().catch(() => {});
-      await saveCountingGameConfig(client, message.guild.id, {
-        ...config,
-        nextNumber: 1,
-        lastUserId: null,
-        currentStreak: 0,
-      });
-
-      const failureMessage = await message.channel.send(`❌ Count broken by <@${message.author.id}>. The sequence has been reset to **1**.`);
-      setTimeout(() => {
-        failureMessage.delete().catch(() => {});
-      }, 10000);
-
-      return true;
-    }
-
-    await recordCorrectCount(client, message.guild.id, message.author.id);
-    return true;
-  } catch (error) {
-    logger.error('Error handling counting game:', error);
-    return false;
-  }
-}
-
-async function handleLeveling(message, client) {
-  try {
-    const rateLimitKey = `xp-event:${message.guild.id}:${message.author.id}`;
-    const canProcess = await checkRateLimit(rateLimitKey, MESSAGE_XP_RATE_LIMIT_ATTEMPTS, MESSAGE_XP_RATE_LIMIT_WINDOW_MS);
-    if (!canProcess) {
-      return;
-    }
-
-    const levelingConfig = await getLevelingConfig(client, message.guild.id);
-    
-    if (!levelingConfig?.enabled) {
-      return;
-    }
-
-    if (levelingConfig.ignoredChannels?.includes(message.channel.id)) {
-      return;
-    }
-
-    if (levelingConfig.ignoredRoles?.length > 0) {
-      const member = await message.guild.members.fetch(message.author.id).catch(() => {
-        return null;
-      });
-      if (member && member.roles.cache.some(role => levelingConfig.ignoredRoles.includes(role.id))) {
-        return;
-      }
-    }
-
-    if (levelingConfig.blacklistedUsers?.includes(message.author.id)) {
-      return;
-    }
-
-    if (!message.content || message.content.trim().length === 0) {
-      return;
-    }
-
-    const userData = await getUserLevelData(client, message.guild.id, message.author.id);
-
-    const cooldownTime = levelingConfig.xpCooldown || 60;
-    const now = Date.now();
-    const timeSinceLastMessage = now - (userData.lastMessage || 0);
-
-    if (timeSinceLastMessage < cooldownTime * 1000) {
-      return;
-    }
-
-    const minXP = levelingConfig.xpRange?.min || levelingConfig.xpPerMessage?.min || 15;
-    const maxXP = levelingConfig.xpRange?.max || levelingConfig.xpPerMessage?.max || 25;
-
-    const safeMinXP = Math.max(1, minXP);
-    const safeMaxXP = Math.max(safeMinXP, maxXP);
-
-    const xpToGive = Math.floor(Math.random() * (safeMaxXP - safeMinXP + 1)) + safeMinXP;
-
-    let finalXP = xpToGive;
-    if (levelingConfig.xpMultiplier && levelingConfig.xpMultiplier > 1) {
-      finalXP = Math.floor(finalXP * levelingConfig.xpMultiplier);
-    }
-
-    const result = await addXp(client, message.guild, message.member, finalXP);
-
-    if (result?.leveledUp) {
-      logger.info(
-        `${message.author.tag} leveled up to level ${result.level} in ${message.guild.name}`
-      );
-    }
-  } catch (error) {
-    logger.error('Error handling leveling for message:', error);
   }
 }
