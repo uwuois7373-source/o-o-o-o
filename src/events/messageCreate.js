@@ -1,4 +1,4 @@
-import { Events, EmbedBuilder } from 'discord.js';
+import { Events, EmbedBuilder, AttachmentBuilder } from 'discord.js';
 import { logger } from '../utils/logger.js';
 import { parsePrefixCommand } from '../utils/prefixParser.js';
 import { supportsPrefixExecution, executePrefixCommand, resolvePrefixAccessKey } from '../utils/messageAdapter.js';
@@ -48,28 +48,51 @@ export default {
 // ==========================================
 async function handleSuggestion(message) {
   try {
-    const text = message.content.trim();
+    const rawText = message.content.trim();
 
     // لو الرسالة فاضية تماماً (بدون نص ولا مرفقات) نتجاهلها
-    if (!text && message.attachments.size === 0) return;
+    if (!rawText && message.attachments.size === 0) return;
+
+    const displayName = message.member?.displayName || message.author.username;
+    const avatar = message.author.displayAvatarURL({ extension: 'png', size: 256 });
+    const unix = Math.floor(Date.now() / 1000);
+
+    // نص الاقتراح داخل بلوك كود (مع تنظيفه وقص الطويل)
+    const safeText = (rawText || '—').replace(/`/g, 'ˋ').slice(0, 1000);
 
     const embed = new EmbedBuilder()
-      .setColor(0x5865f2)
-      .setAuthor({
-        name: message.member?.displayName || message.author.username,
-        iconURL: message.author.displayAvatarURL({ dynamic: true }),
+      .setColor(0x2b2d31)
+      .setTitle(`${START_EMOJI_FULL} **New Suggestion!**`)
+      .addFields(
+        { name: '**Status**', value: '**Under Review**', inline: true },
+        { name: '**User**', value: `**<@${message.author.id}>**`, inline: true },
+        { name: '**Time**', value: `**<t:${unix}:f>**`, inline: true },
+        { name: '**Suggestion**', value: `\`\`\`\n${safeText}\n\`\`\`` },
+      )
+      .setFooter({
+        text: `Suggestion sent by: ${displayName}`,
+        iconURL: avatar,
       })
-      .setDescription(`${START_EMOJI_FULL} ${text || '\u200b'}`)
-      .setFooter({ text: `ID: ${message.author.id}` })
       .setTimestamp();
 
-    // لو فيه صورة مرفقة نحطها داخل الـ embed
+    // الصورة المرفقة تظهر على اليمين (مصغرة)، وإلا نعرض صورة الشخص
+    const files = [];
     const image = message.attachments.find(a => a.contentType?.startsWith('image/'));
-    if (image) embed.setImage(image.url);
+    if (image) {
+      const ext = (image.name?.split('.').pop() || 'png').toLowerCase();
+      const fileName = `suggestion.${ext}`;
+      files.push(new AttachmentBuilder(image.url, { name: fileName }));
+      embed.setThumbnail(`attachment://${fileName}`);
+    } else {
+      embed.setThumbnail(avatar);
+    }
 
-    // نرسل الاقتراح أول، وبعدها نحذف رسالة الشخص (عشان ما يضيع الاقتراح لو فشل الإرسال)
-    // أزرار التصويت (صح / غلط) بدل الريأكشن
-    await message.channel.send({ embeds: [embed], components: [buildVoteRow(0, 0)] });
+    // نرسل الاقتراح أول (يعيد رفع الصورة)، وبعدها نحذف رسالة الشخص
+    await message.channel.send({
+      embeds: [embed],
+      components: [buildVoteRow(0, 0)],
+      files,
+    });
     await message.delete().catch(() => {});
   } catch (error) {
     logger.error('Error handling suggestion:', error);
