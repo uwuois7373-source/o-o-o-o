@@ -15,27 +15,22 @@ import { buildVoteRow } from '../utils/suggestionVotes.js';
 // إعدادات نظام الاقتراحات
 // ==========================================
 const SUGGESTION_CHANNEL_ID = '1437792846907183165';
-
-// إيموجي يظهر في بداية نص الاقتراح
 const START_EMOJI_FULL = '<:moderator:1519524179396005908>';
-
-// المنطقة الزمنية للوقت اللي يظهر في أسفل الاقتراح (غيّرها لو تبي)
 const SUGGESTION_TIMEZONE = 'Asia/Riyadh';
 
 export default {
   name: Events.MessageCreate,
   async execute(message, client) {
     try {
-      // تجاهل البوتات والرسائل الخاصة
       if (message.author.bot || !message.guild) return;
 
       // 0. نظام الاقتراحات
       if (message.channel.id === SUGGESTION_CHANNEL_ID) {
         await handleSuggestion(message);
-        return; // ما نكمل للردود التلقائية أو الأوامر داخل روم الاقتراحات
+        return;
       }
 
-      // 1. معالج الردود التلقائية (يعمل فوراً)
+      // 1. معالج الردود التلقائية
       handleAutoResponse(message);
 
       // 2. معالج الأوامر العادية
@@ -52,15 +47,12 @@ export default {
 async function handleSuggestion(message) {
   try {
     const rawText = message.content.trim();
-
-    // لو الرسالة فاضية تماماً (بدون نص ولا مرفقات) نتجاهلها
     if (!rawText && message.attachments.size === 0) return;
 
     const displayName = message.member?.displayName || message.author.username;
     const avatar = message.author.displayAvatarURL({ extension: 'png', size: 256 });
     const unix = Math.floor(Date.now() / 1000);
 
-    // الوقت بصيغة: 26/11/2026 14:03
     const footerDate = new Date().toLocaleString('en-GB', {
       timeZone: SUGGESTION_TIMEZONE,
       day: '2-digit',
@@ -71,7 +63,6 @@ async function handleSuggestion(message) {
       hour12: false,
     }).replace(',', '');
 
-    // نص الاقتراح داخل بلوك كود (مع تنظيفه وقص الطويل)
     const safeText = (rawText || '—').replace(/`/g, 'ˋ').slice(0, 1000);
 
     const embed = new EmbedBuilder()
@@ -88,7 +79,6 @@ async function handleSuggestion(message) {
         iconURL: avatar,
       });
 
-    // الصورة المرفقة تظهر على اليمين (مصغرة)، وإلا نعرض صورة الشخص
     const files = [];
     const image = message.attachments.find(a => a.contentType?.startsWith('image/'));
     if (image) {
@@ -100,7 +90,6 @@ async function handleSuggestion(message) {
       embed.setThumbnail(avatar);
     }
 
-    // نرسل الاقتراح أول (يعيد رفع الصورة)، وبعدها نحذف رسالة الشخص
     await message.channel.send({
       embeds: [embed],
       components: [buildVoteRow(0, 0)],
@@ -113,7 +102,7 @@ async function handleSuggestion(message) {
 }
 
 // ==========================================
-// دالة الرد التلقائي (نظيفة وتعمل بدون توقف)
+// دالة الرد التلقائي
 // ==========================================
 function handleAutoResponse(message) {
   try {
