@@ -19,6 +19,9 @@ const SUGGESTION_CHANNEL_ID = '1437792846907183165';
 // إيموجي يظهر في بداية نص الاقتراح
 const START_EMOJI_FULL = '<:moderator:1519524179396005908>';
 
+// المنطقة الزمنية للوقت اللي يظهر في أسفل الاقتراح (غيّرها لو تبي)
+const SUGGESTION_TIMEZONE = 'Asia/Riyadh';
+
 export default {
   name: Events.MessageCreate,
   async execute(message, client) {
@@ -57,6 +60,17 @@ async function handleSuggestion(message) {
     const avatar = message.author.displayAvatarURL({ extension: 'png', size: 256 });
     const unix = Math.floor(Date.now() / 1000);
 
+    // الوقت بصيغة: 26/11/2026 14:03
+    const footerDate = new Date().toLocaleString('en-GB', {
+      timeZone: SUGGESTION_TIMEZONE,
+      day: '2-digit',
+      month: '2-digit',
+      year: 'numeric',
+      hour: '2-digit',
+      minute: '2-digit',
+      hour12: false,
+    }).replace(',', '');
+
     // نص الاقتراح داخل بلوك كود (مع تنظيفه وقص الطويل)
     const safeText = (rawText || '—').replace(/`/g, 'ˋ').slice(0, 1000);
 
@@ -70,10 +84,9 @@ async function handleSuggestion(message) {
         { name: '**Suggestion**', value: `\`\`\`\n${safeText}\n\`\`\`` },
       )
       .setFooter({
-        text: `Suggestion sent by: ${displayName}`,
+        text: `Suggestion sent by : ${displayName} • ${footerDate}`,
         iconURL: avatar,
-      })
-      .setTimestamp();
+      });
 
     // الصورة المرفقة تظهر على اليمين (مصغرة)، وإلا نعرض صورة الشخص
     const files = [];
