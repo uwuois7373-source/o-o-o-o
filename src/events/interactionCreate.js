@@ -1,4 +1,4 @@
-import { Events, MessageFlags } from 'discord.js';
+import { Events, EmbedBuilder, MessageFlags, PermissionFlagsBits } from 'discord.js';
 import { logger } from '../utils/logger.js';
 import { getGuildConfig } from '../services/config/guildConfig.js';
 import {
@@ -44,6 +44,53 @@ function withTraceContext(context = {}, traceContext = {}) {
     command: context.commandName || traceContext.command,
     ...context
   };
+}
+
+async function handleOfferButtons(interaction, interactionTraceContext) {
+  const [action, ownerId, timestamp] = interaction.customId.split(':');
+
+  if (action === 'offer_info') {
+    const unixTime = timestamp
+      ? Math.floor(Number(timestamp) / 1000)
+      : Math.floor(Date.now() / 1000);
+
+    const infoEmbed = new EmbedBuilder()
+      .setColor(0x3498db)
+      .setTitle('Offer Information')
+      .addFields(
+        { name: 'Seller / Author', value: `<@${ownerId}> (\`${ownerId}\`)`, inline: true },
+        { name: 'Posted At', value: `<t:${unixTime}:f>`, inline: true },
+      );
+
+    await interaction.reply({
+      embeds: [infoEmbed],
+      flags: MessageFlags.Ephemeral,
+    });
+    return true;
+  }
+
+  if (action === 'offer_delete') {
+    const canDelete =
+      interaction.user.id === ownerId ||
+      interaction.memberPermissions?.has(PermissionFlagsBits.ManageMessages);
+
+    if (!canDelete) {
+      await interaction.reply({
+        content: 'You do not have permission to delete this offer.',
+        flags: MessageFlags.Ephemeral,
+      });
+      return true;
+    }
+
+    await interaction.message.delete().catch(() => {});
+    await interaction.reply({
+      content: 'Offer deleted successfully.',
+      flags: MessageFlags.Ephemeral,
+    });
+    return true;
+  }
+
+  return false;
 }
 
 export default {
@@ -185,7 +232,7 @@ export default {
           }
 
           const focusedOption = interaction.options.getFocused(true);
-          
+
           if (interaction.commandName === 'apply' && focusedOption.name === 'application') {
             try {
               const { getApplicationRoles } = await import('../utils/database.js');
@@ -193,10 +240,10 @@ export default {
               const roleName = interaction.options.getString('application', false);
 
               const filtered = roles.filter(role =>
-                role.enabled !== false && 
+                role.enabled !== false &&
                 role.name.toLowerCase().startsWith(roleName?.toLowerCase() || '')
               );
-              
+
               await interaction.respond(
                 filtered.slice(0, 25).map(role => ({
                   name: `${role.name}${role.enabled === false ? ' (disabled)' : ''}`,
@@ -220,7 +267,7 @@ export default {
               const filtered = roles.filter(role =>
                 role.name.toLowerCase().startsWith(appName?.toLowerCase() || '')
               );
-              
+
               await interaction.respond(
                 filtered.slice(0, 25).map(role => ({
                   name: `${role.name}${role.enabled === false ? ' (disabled)' : ''}`,
@@ -240,9 +287,9 @@ export default {
               const { getAllReactionRoleMessages, deleteReactionRoleMessage } = await import('../services/reactionRoleService.js');
               const guildId = interaction.guildId;
               const guild = interaction.guild;
-              
+
               let panels = await getAllReactionRoleMessages(client, guildId);
-              
+
               if (!panels || panels.length === 0) {
                 await interaction.respond([]);
                 return;
@@ -253,13 +300,13 @@ export default {
                 if (!panel.messageId || !panel.channelId) {
                   continue;
                 }
-                
+
                 const channel = guild.channels.cache.get(panel.channelId);
                 if (!channel) {
                   await deleteReactionRoleMessage(client, guildId, panel.messageId).catch(() => {});
                   continue;
                 }
-                
+
                 const msg = await channel.messages.fetch(panel.messageId).catch(() => null);
                 if (!msg) {
                   await deleteReactionRoleMessage(client, guildId, panel.messageId).catch(() => {});
@@ -267,24 +314,24 @@ export default {
                 }
                 validPanels.push(panel);
               }
-              
+
               if (validPanels.length === 0) {
                 await interaction.respond([]);
                 return;
               }
-              
+
               const choices = await Promise.all(
                 validPanels.slice(0, 25).map(async panel => {
                   try {
                     const channel = guild.channels.cache.get(panel.channelId);
                     if (!channel) return null;
-                    
+
                     const msg = await channel.messages.fetch(panel.messageId).catch(() => null);
                     if (!msg) return null;
-                    
+
                     const title = msg?.embeds?.[0]?.title ?? 'Untitled Panel';
                     const channelName = channel?.name ?? 'unknown';
-                    
+
                     return {
                       name: `${title} (${channelName})`.substring(0, 100),
                       value: panel.messageId
@@ -294,7 +341,7 @@ export default {
                   }
                 })
               );
-              
+
               const validChoices = choices.filter(c => c !== null);
               await interaction.respond(validChoices);
             } catch (error) {
@@ -307,6 +354,22 @@ export default {
             }
           }
         } else if (interaction.isButton()) {
+          if (
+            interaction.customId.startsWith('offer_info:') ||
+            interaction.customId.startsWith('offer_delete:')
+          ) {
+            try {
+              await handleOfferButtons(interaction, interactionTraceContext);
+            } catch (error) {
+              await handleInteractionError(interaction, error, withTraceContext({
+                type: 'button',
+                customId: interaction.customId,
+                handler: 'offers'
+              }, interactionTraceContext));
+            }
+            return;
+          }
+
           if (interaction.customId.startsWith('shared_todo_')) {
             const parts = interaction.customId.split('_');
             const buttonType = parts.slice(0, 3).join('_');
