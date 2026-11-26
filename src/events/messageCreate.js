@@ -9,18 +9,15 @@ import { getCommandPrefix, getBotMessage, isBotOwner, isCommandCategoryEnabled, 
 import { enforceAbuseProtection, formatCooldownDuration } from '../utils/abuseProtection.js';
 import { createEmbed } from '../utils/embeds.js';
 import { isCommandEnabled } from '../services/commandAccessService.js';
+import { buildVoteRow } from '../utils/suggestionVotes.js';
 
 // ==========================================
 // إعدادات نظام الاقتراحات
 // ==========================================
 const SUGGESTION_CHANNEL_ID = '1437792846907183165';
 
-// إيموجي التصويت (نستخدم الـ ID الأخير فقط)
-const UP_EMOJI = '1573676877745225859';    // صح
-const DOWN_EMOJI = '1573676851396612106';  // غلط
-
-// إيموجي يظهر في بداية نص الاقتراح (الصيغة الكاملة)
-const START_EMOJI_FULL = '<:1158060888041979934:1538952241652699136>';
+// إيموجي يظهر في بداية نص الاقتراح
+const START_EMOJI_FULL = '<:moderator:1519524179396005908>';
 
 export default {
   name: Events.MessageCreate,
@@ -71,12 +68,9 @@ async function handleSuggestion(message) {
     if (image) embed.setImage(image.url);
 
     // نرسل الاقتراح أول، وبعدها نحذف رسالة الشخص (عشان ما يضيع الاقتراح لو فشل الإرسال)
-    const sent = await message.channel.send({ embeds: [embed] });
+    // أزرار التصويت (صح / غلط) بدل الريأكشن
+    await message.channel.send({ embeds: [embed], components: [buildVoteRow(0, 0)] });
     await message.delete().catch(() => {});
-
-    // نضيف إيموجي التصويت
-    await sent.react(UP_EMOJI);
-    await sent.react(DOWN_EMOJI);
   } catch (error) {
     logger.error('Error handling suggestion:', error);
   }
