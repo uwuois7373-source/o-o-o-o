@@ -1,4 +1,12 @@
-import { Events, EmbedBuilder, MessageFlags, PermissionFlagsBits } from 'discord.js';
+import {
+  Events,
+  EmbedBuilder,
+  ActionRowBuilder,
+  ButtonBuilder,
+  ButtonStyle,
+  MessageFlags,
+  PermissionFlagsBits,
+} from 'discord.js';
 import { logger } from '../utils/logger.js';
 import { getGuildConfig } from '../services/config/guildConfig.js';
 import {
@@ -19,6 +27,8 @@ import { resolveSlashAccessKey } from '../utils/messageAdapter.js';
 import { isCollectorManagedComponent } from '../utils/collectorComponents.js';
 import { ResponseCoordinator } from '../utils/responseCoordinator.js';
 import { enforceDefaultCommandPermissions } from '../utils/permissionGuard.js';
+
+const OFFER_EMOJI = '<:emoji_14:1519524322979479602>';
 
 const COMMAND_ERROR_SUBTYPES = {
   warn: 'warn_failed',
@@ -46,24 +56,47 @@ function withTraceContext(context = {}, traceContext = {}) {
   };
 }
 
-async function handleOfferButtons(interaction, interactionTraceContext) {
-  const [action, ownerId, timestamp] = interaction.customId.split(':');
+async function handleOfferButtons(interaction) {
+  const [action, ownerId] = interaction.customId.split(':');
 
   if (action === 'offer_info') {
-    const unixTime = timestamp
-      ? Math.floor(Number(timestamp) / 1000)
-      : Math.floor(Date.now() / 1000);
+    const member = await interaction.guild?.members.fetch(ownerId).catch(() => null);
+    const user = member?.user || await interaction.client.users.fetch(ownerId).catch(() => null);
+
+    const createdAt = user?.createdAt || new Date();
+    const ageDays = Math.max(0, Math.floor((Date.now() - createdAt.getTime()) / (1000 * 60 * 60 * 24)));
+    const ageMonths = Math.floor(ageDays / 30);
+
+    const rolesList = member
+      ? member.roles.cache
+          .filter(r => r.id !== interaction.guild.id)
+          .sort((a, b) => b.position - a.position)
+          .map(r => r.name)
+          .join(' . ') || 'None'
+      : 'None';
 
     const infoEmbed = new EmbedBuilder()
-      .setColor(0x3498db)
-      .setTitle('Offer Information')
+      .setColor(0xf5b014)
+      .setTitle(`${OFFER_EMOJI} **Offer Information**`)
       .addFields(
-        { name: 'Seller / Author', value: `<@${ownerId}> (\`${ownerId}\`)`, inline: true },
-        { name: 'Posted At', value: `<t:${unixTime}:f>`, inline: true },
-      );
+        { name: 'User', value: `<@${ownerId}>` },
+        { name: 'Tag', value: `\`${user?.username || ownerId}\`` },
+        { name: 'Account Age', value: `${ageDays} days (${ageMonths} months)` },
+        { name: 'Roles', value: rolesList.slice(0, 1024) },
+      )
+      .setTimestamp();
+
+    const profileRow = new ActionRowBuilder().addComponents(
+      new ButtonBuilder()
+        .setLabel('Owner Profile')
+        .setEmoji(OFFER_EMOJI)
+        .setStyle(ButtonStyle.Link)
+        .setURL(`https://discord.com/users/${ownerId}`),
+    );
 
     await interaction.reply({
       embeds: [infoEmbed],
+      components: [profileRow],
       flags: MessageFlags.Ephemeral,
     });
     return true;
@@ -76,7 +109,7 @@ async function handleOfferButtons(interaction, interactionTraceContext) {
 
     if (!canDelete) {
       await interaction.reply({
-        content: 'You do not have permission to delete this offer.',
+        content: `${OFFER_EMOJI} You do not have permission to delete this offer.`,
         flags: MessageFlags.Ephemeral,
       });
       return true;
@@ -84,7 +117,7 @@ async function handleOfferButtons(interaction, interactionTraceContext) {
 
     await interaction.message.delete().catch(() => {});
     await interaction.reply({
-      content: 'Offer deleted successfully.',
+      content: `${OFFER_EMOJI} Offer deleted successfully.`,
       flags: MessageFlags.Ephemeral,
     });
     return true;
@@ -359,7 +392,7 @@ export default {
             interaction.customId.startsWith('offer_delete:')
           ) {
             try {
-              await handleOfferButtons(interaction, interactionTraceContext);
+              await handleOfferButtons(interaction);
             } catch (error) {
               await handleInteractionError(interaction, error, withTraceContext({
                 type: 'button',
