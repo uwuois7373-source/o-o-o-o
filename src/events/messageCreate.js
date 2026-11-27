@@ -1,11 +1,4 @@
-import {
-  Events,
-  EmbedBuilder,
-  AttachmentBuilder,
-  ActionRowBuilder,
-  ButtonBuilder,
-  ButtonStyle,
-} from 'discord.js';
+import { Events, EmbedBuilder, AttachmentBuilder } from 'discord.js';
 import { logger } from '../utils/logger.js';
 import { parsePrefixCommand } from '../utils/prefixParser.js';
 import { supportsPrefixExecution, executePrefixCommand, resolvePrefixAccessKey } from '../utils/messageAdapter.js';
@@ -17,48 +10,52 @@ import { enforceAbuseProtection, formatCooldownDuration } from '../utils/abusePr
 import { createEmbed } from '../utils/embeds.js';
 import { isCommandEnabled } from '../services/commandAccessService.js';
 import { buildVoteRow } from '../utils/suggestionVotes.js';
+import { handleBlackWhite } from '../utils/blackWhite.js';
+import { handleOffer } from './interactionCreate.js';
 
 // ==========================================
 // إعدادات نظام الاقتراحات
 // ==========================================
 const SUGGESTION_CHANNEL_ID = '1437792846907183165';
-const START_EMOJI_FULL = '<:moderator:1519524179396005908>';
-const SUGGESTION_TIMEZONE = 'Asia/Riyadh';
 
-// ==========================================
-// إعدادات نظام العروض (Offers System)
-// ==========================================
+// روم تحويل الصور إلى أبيض وأسود
+const BW_CHANNEL_ID = '1568262480835117186';
+
+// روم العروض
 const OFFERS_CHANNEL_ID = '1435618260581355603';
-const OFFERS_ROLE_ID = '1526407997763354686';
-const ORDER_CHANNEL_URL = 'https://discord.com/channels/1343103634761715755/1398080880236302407';
 
-const OFFER_COLOR = 0xff0000; // أحمر
-const TICKET_BUTTON_EMOJI = '<:Gemini_Generated_Image_csza3lcsz:1495076546539684121>';
-const OFFER_INFO_EMOJI = '<:Gemini_Generated_Image_vzqcwfvzq:1495078839322280137>';
-const OFFER_DELETE_EMOJI = '<:Gemini_Generated_Image_csza3lcsz:1495076791302357123>';
+// إيموجي يظهر في بداية نص الاقتراح
+const START_EMOJI_FULL = '<:moderator:1519524179396005908>';
 
-const DIVIDER_LINE_GIF =
-  'https://cdn.discordapp.com/attachments/1391737614926614588/1555914383253708850/standard-1.gif?backend=b2&ex=6b0972b0&is=6b082130&hm=ae902d4ad6dc2d371f1028efb789e64efff59565abf7d5bdd66e6af45fda9d9e&';
+// المنطقة الزمنية للوقت اللي يظهر في أسفل الاقتراح (غيّرها لو تبي)
+const SUGGESTION_TIMEZONE = 'Asia/Riyadh';
 
 export default {
   name: Events.MessageCreate,
   async execute(message, client) {
     try {
+      // تجاهل البوتات والرسائل الخاصة
       if (message.author.bot || !message.guild) return;
 
       // 0. نظام الاقتراحات
       if (message.channel.id === SUGGESTION_CHANNEL_ID) {
         await handleSuggestion(message);
+        return; // ما نكمل للردود التلقائية أو الأوامر داخل روم الاقتراحات
+      }
+
+      // 0.5 روم تحويل الصور إلى أبيض وأسود
+      if (message.channel.id === BW_CHANNEL_ID) {
+        await handleBlackWhite(message);
         return;
       }
 
-      // 0.5 نظام العروض
+      // 0.75 نظام العروض
       if (message.channel.id === OFFERS_CHANNEL_ID) {
         await handleOffer(message);
         return;
       }
 
-      // 1. معالج الردود التلقائية
+      // 1. معالج الردود التلقائية (يعمل فوراً)
       handleAutoResponse(message);
 
       // 2. معالج الأوامر العادية
@@ -66,7 +63,7 @@ export default {
     } catch (error) {
       logger.error('Error in messageCreate event:', error);
     }
-  },
+  }
 };
 
 // ==========================================
@@ -75,12 +72,15 @@ export default {
 async function handleSuggestion(message) {
   try {
     const rawText = message.content.trim();
+
+    // لو الرسالة فاضية تماماً (بدون نص ولا مرفقات) نتجاهلها
     if (!rawText && message.attachments.size === 0) return;
 
     const displayName = message.member?.displayName || message.author.username;
     const avatar = message.author.displayAvatarURL({ extension: 'png', size: 256 });
     const unix = Math.floor(Date.now() / 1000);
 
+    // الوقت بصيغة: 26/11/2026 14:03
     const footerDate = new Date().toLocaleString('en-GB', {
       timeZone: SUGGESTION_TIMEZONE,
       day: '2-digit',
@@ -91,6 +91,7 @@ async function handleSuggestion(message) {
       hour12: false,
     }).replace(',', '');
 
+    // نص الاقتراح داخل بلوك كود (مع تنظيفه وقص الطويل)
     const safeText = (rawText || '—').replace(/`/g, 'ˋ').slice(0, 1000);
 
     const embed = new EmbedBuilder()
@@ -107,6 +108,7 @@ async function handleSuggestion(message) {
         iconURL: avatar,
       });
 
+    // الصورة المرفقة تظهر على اليمين (مصغرة)، وإلا نعرض صورة الشخص
     const files = [];
     const image = message.attachments.find(a => a.contentType?.startsWith('image/'));
     if (image) {
@@ -118,6 +120,7 @@ async function handleSuggestion(message) {
       embed.setThumbnail(avatar);
     }
 
+    // نرسل الاقتراح أول (يعيد رفع الصورة)، وبعدها نحذف رسالة الشخص
     await message.channel.send({
       embeds: [embed],
       components: [buildVoteRow(0, 0)],
@@ -130,75 +133,7 @@ async function handleSuggestion(message) {
 }
 
 // ==========================================
-// دالة العروض (Offers)
-// ==========================================
-async function handleOffer(message) {
-  try {
-    const rawText = message.content.trim();
-    if (!rawText && message.attachments.size === 0) return;
-
-    const safeText = rawText ? rawText.slice(0, 3500) : '—';
-    const files = [];
-
-    const embed = new EmbedBuilder()
-      .setColor(OFFER_COLOR)
-      .setDescription(`<@&${OFFERS_ROLE_ID}>\n\n${safeText}\n\n<@&${OFFERS_ROLE_ID}>`)
-      .setTimestamp();
-
-    const image = message.attachments.find(a => a.contentType?.startsWith('image/'));
-    if (image) {
-      const ext = (image.name?.split('.').pop() || 'png').toLowerCase();
-      const fileName = `offer.${ext}`;
-      files.push(new AttachmentBuilder(image.url, { name: fileName }));
-      embed.setImage(`attachment://${fileName}`);
-    }
-
-    const linkRow = new ActionRowBuilder().addComponents(
-      new ButtonBuilder()
-        .setLabel('Order Now')
-        .setEmoji(TICKET_BUTTON_EMOJI)
-        .setStyle(ButtonStyle.Link)
-        .setURL(ORDER_CHANNEL_URL),
-    );
-
-    const actionRow = new ActionRowBuilder().addComponents(
-      new ButtonBuilder()
-        .setCustomId(`offer_info:${message.author.id}:${message.createdTimestamp}`)
-        .setLabel('Offer Information')
-        .setEmoji(OFFER_INFO_EMOJI)
-        .setStyle(ButtonStyle.Primary),
-      new ButtonBuilder()
-        .setCustomId(`offer_delete:${message.author.id}`)
-        .setLabel('Delete Offer')
-        .setEmoji(OFFER_DELETE_EMOJI)
-        .setStyle(ButtonStyle.Danger),
-    );
-
-    // إرسال العرض مع منشن رول العروض و @everyone (بدون خط داخل الإيمبد)
-    await message.channel.send({
-      content: `@everyone <@&${OFFERS_ROLE_ID}>`,
-      embeds: [embed],
-      components: [linkRow, actionRow],
-      files,
-      allowedMentions: {
-        parse: ['everyone'],
-        roles: [OFFERS_ROLE_ID],
-      },
-    });
-
-    // إرسال الخط بعد الإيمبد كرسالة مستقلة
-    await message.channel.send({
-      content: DIVIDER_LINE_GIF,
-    });
-
-    await message.delete().catch(() => {});
-  } catch (error) {
-    logger.error('Error handling offer:', error);
-  }
-}
-
-// ==========================================
-// دالة الرد التلقائي
+// دالة الرد التلقائي (نظيفة وتعمل بدون توقف)
 // ==========================================
 function handleAutoResponse(message) {
   try {
